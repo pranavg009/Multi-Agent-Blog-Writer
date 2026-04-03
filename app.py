@@ -19,40 +19,30 @@ st.set_page_config(
 # ── LLM Setup — Claude primary, Gemini fallback ─────────────
 # NOTE: no @st.cache_resource — avoids caching None on cold start
 def get_llm():
-    anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    gemini_key    = os.environ.get("GEMINI_API_KEY", "")
+    try:
+        anthropic_key = st.secrets.get("ANTHROPIC_API_KEY", "")
+    except:
+        anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    try:
+        gemini_key = st.secrets.get("GEMINI_API_KEY", "")
+    except:
+        gemini_key = os.environ.get("GEMINI_API_KEY", "")
 
     if anthropic_key:
-        try:
-            c = ant.Anthropic(api_key=anthropic_key)
-            c.messages.create(
-                model="claude-haiku-4-5-20251001",
-                max_tokens=5,
-                messages=[{"role": "user", "content": "hi"}]
-            )
-            return (
-                LLM(model="anthropic/claude-haiku-4-5-20251001",
-                    max_tokens=4096, temperature=0.7),
-                "Claude (Haiku)"
-            )
-        except Exception:
-            pass
-
+        return (
+            LLM(model="anthropic/claude-haiku-4-5-20251001",
+                max_tokens=4096, temperature=0.7),
+            "Claude (Haiku)"
+        )
     if gemini_key:
-        try:
-            genai.configure(api_key=gemini_key)
-            m = genai.GenerativeModel("gemini-2.0-flash")
-            m.generate_content("hi")
-            return (
-                LLM(model="gemini/gemini-2.0-flash",
-                    max_tokens=4096, temperature=0.7),
-                "Gemini (2.0 Flash)"
-            )
-        except Exception:
-            pass
-
+        os.environ["GEMINI_API_KEY"] = gemini_key
+        return (
+            LLM(model="gemini/gemini-2.0-flash",
+                max_tokens=4096, temperature=0.7),
+            "Gemini (2.0 Flash)"
+        )
     return None, "None"
-
+    
 # ── Tavily Search Tool ───────────────────────────────────────
 class SearchInput(BaseModel):
     query: str = Field(description="Search query")
