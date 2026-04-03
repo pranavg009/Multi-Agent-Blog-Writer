@@ -37,9 +37,9 @@ def get_llm():
     if gemini_key:
         os.environ["GEMINI_API_KEY"] = gemini_key
         return (
-            LLM(model="gemini/gemini-2.5-pro",
+            LLM(model="gemini/gemini-2.5-flash",
                 max_tokens=4096, temperature=0.7),
-            "Gemini (2.5 pro)"
+            "Gemini (2.5 flash)"
         )
     return None, "None"
     
