@@ -1,6 +1,6 @@
 # Multi-Agent Blog Writer
  
-A 3-agent AI pipeline that takes a topic and returns a finished, publication-ready blog post — with sources, SEO metadata, and configurable tone. No back-and-forth. One click.
+A 3-agent AI pipeline that takes a topic and returns a finished, publication-ready blog post with sources, SEO metadata, and configurable tone. No back-and-forth. One click.
  
 **Live demo:** [multi-agent-blog-writer-01.streamlit.app](https://multi-agent-blog-writer-01.streamlit.app/)
  
@@ -12,11 +12,11 @@ Most AI writing tools give you a draft and leave the rest to you. This one doesn
  
 Three agents run in sequence, each one picking up where the last left off:
  
-1. **Researcher** — runs 3 separate Tavily web searches on different angles of your topic (facts/stats, recent news, expert views). Returns structured notes with source URLs. It never makes stats up — if it can't find a number in the search results, it doesn't include one.
+1. **Researcher** runs 3 separate Tavily web searches on different angles of your topic (facts/stats, recent news, expert views). Returns structured notes with source URLs. It never makes stats up if it can't find a number in the search results, it doesn't include one.
  
-2. **Writer** — receives those research notes as context and writes a full blog post in your chosen tone and word count. Every statistic in the post traces back to a real URL from step 1.
+2. **Writer** receives those research notes as context and writes a full blog post in your chosen tone and word count. Every statistic in the post traces back to a real URL from step 1.
  
-3. **Editor** — polishes the draft, fixes grammar and flow, and appends SEO metadata: a title under 60 characters, a meta description under 160, and 5 tags.
+3. **Editor** polishes the draft, fixes grammar and flow, and appends SEO metadata: a title under 60 characters, a meta description under 160, and 5 tags.
  
 The whole thing runs in 4–8 minutes.
  
@@ -27,7 +27,7 @@ The whole thing runs in 4–8 minutes.
 | Agent framework | CrewAI 1.9+ |
 | Primary LLM | Claude Haiku |
 | Fallback LLM | Gemini 2.5 Flash |
-| Search | Tavily — built for AI agents, Does not give web scraped results |
+| Search | Tavily built for AI agents, Does not give web scraped results |
 | UI | Streamlit |
 | Deployment | Streamlit Cloud |
  
@@ -57,7 +57,7 @@ You need at least one LLM key (Anthropic or Gemini) and the Tavily key. If Anthr
    
 ## How the agents hand off context
  
-CrewAI passes task outputs as context to the next agent. The Writer never touches the web — it only sees what the Researcher found. The Editor only sees the Writer's draft. This keeps each agent focused and means the final post is grounded in real search data rather than whatever the LLM remembers from training.
+CrewAI passes task outputs as context to the next agent. The Writer never touches the web it only sees what the Researcher found. The Editor only sees the Writer's draft. This keeps each agent focused and means the final post is grounded in real search data rather than whatever the LLM remembers from training.
  
 ```
 User input (topic, tone, word count)
@@ -88,8 +88,8 @@ User input (topic, tone, word count)
  
 From the sidebar before generating:
  
-- **Tone** — Professional, Casual, Technical, or Academic
-- **Target word count** — 300 to 2000 words
-- **Topic** — 6 suggested topics, or enter your own
+- **Tone** Professional, Casual, Technical, or Academic
+- **Target word count** 300 to 2000 words
+- **Topic** 6 suggested topics, or enter your own
  
 The app also keeps a history of your last 5 generated posts in the session.
