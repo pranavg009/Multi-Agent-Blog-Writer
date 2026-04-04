@@ -22,16 +22,24 @@ st.set_page_config(
 # then use model="openai/llama-3.3-70b-versatile"
 # ============================================================
 def get_llm():
+    # Streamlit Cloud loads secrets into st.secrets as a dict
+    # Access directly — don't use .get() which can fail silently
+    groq_key = ""
+
     try:
-        groq_key = st.secrets.get("GROQ_API_KEY", "")
-    except Exception:
-        groq_key = os.environ.get("GROQ_API_KEY", "")
+        groq_key = st.secrets["GROQ_API_KEY"]
+    except KeyError:
+        pass
+
+    if not groq_key:
+        try:
+            groq_key = os.environ.get("GROQ_API_KEY", "")
+        except Exception:
+            pass
 
     if not groq_key:
         return None, "None"
 
-    # Must set env vars BEFORE creating LLM object
-    # CrewAI native OpenAI provider reads these at init time
     os.environ["OPENAI_API_KEY"]  = groq_key
     os.environ["OPENAI_API_BASE"] = "https://api.groq.com/openai/v1"
 
@@ -40,7 +48,7 @@ def get_llm():
             model="openai/llama-3.3-70b-versatile",
             max_tokens=4096,
             temperature=0.7,
-            timeout=120,  # 2 min cap per call — prevents infinite hang
+            timeout=120,
         )
         return llm, "Groq · Llama 3.3 70B"
     except Exception as e:
