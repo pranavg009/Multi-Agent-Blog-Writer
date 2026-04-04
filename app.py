@@ -61,35 +61,35 @@ class DDGSearchTool(BaseTool):
     args_schema: Type[BaseModel] = SearchInput
     model_config = {"arbitrary_types_allowed": True}
 
-   def _run(self, query: str) -> str:
-    for attempt in range(3):
-        try:
-            with DDGS(timeout=10) as ddgs:
-                results = list(ddgs.text(query, max_results=5, timelimit='m'))
+    def _run(self, query: str) -> str:
+        for attempt in range(3):
+            try:
+                with DDGS(timeout=10) as ddgs:
+                    results = list(ddgs.text(query, max_results=5, timelimit='m'))
 
-            if not results:
-                return f"No results found for: '{query}'"
+                if not results:
+                    return f"No results found for: '{query}'"
 
-            output = [f"Search results for: '{query}'\n{'='*50}\n"]
-            for i, r in enumerate(results, 1):
-                output.append(
-                    f"{i}. {r.get('title', 'No title')}\n"
-                    f"   URL: {r.get('href', '')}\n"
-                    f"   {r.get('body', '')[:400]}\n"
-                )
-            return "\n".join(output)
+                output = [f"Search results for: '{query}'\n{'='*50}\n"]
+                for i, r in enumerate(results, 1):
+                    output.append(
+                        f"{i}. {r.get('title', 'No title')}\n"
+                        f"   URL: {r.get('href', '')}\n"
+                        f"   {r.get('body', '')[:400]}\n"
+                    )
+                return "\n".join(output)
 
-        except Exception as e:
-            if attempt < 2:
-                time.sleep(2 ** attempt)
-            else:
-                return (
-                    f"Web search unavailable right now ({e}). "
-                    "Use your training knowledge to answer as best you can, "
-                    "clearly noting which facts you are inferring rather than citing."
-                )
-    return "Search unavailable — use training knowledge and note this clearly."
-
+            except Exception as e:
+                if attempt < 2:
+                    time.sleep(2 ** attempt)
+                else:
+                    return (
+                        f"Web search unavailable right now ({e}). "
+                        "Use your training knowledge to answer as best you can, "
+                        "clearly noting which facts you are inferring rather than citing."
+                    )
+        return "Search unavailable — use training knowledge and note this clearly."
+        
 search_tool = DDGSearchTool()
 
 
