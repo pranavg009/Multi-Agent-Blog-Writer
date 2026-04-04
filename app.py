@@ -34,7 +34,7 @@ def get_llm():
                 max_tokens=4096,
                 temperature=0.7
             ),
-            "OpenRouter (Gemma 4 26B A4B)"
+            "OpenRouter (Llama 3.3 70B Free)"
         )
     return None, "None"
     
