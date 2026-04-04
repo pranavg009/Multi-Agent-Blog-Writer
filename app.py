@@ -40,12 +40,12 @@ def get_llm():
     if not groq_key:
         return None, "None"
 
-    os.environ["OPENAI_API_KEY"]  = groq_key
-    os.environ["OPENAI_API_BASE"] = "https://api.groq.com/openai/v1"
+    os.environ["GROQ_API_KEY"] = groq_key
 
     try:
         llm = LLM(
-            model="openai/llama-3.3-70b-versatile",
+            model="groq/llama-3.3-70b-versatile",
+            api_key=groq_key,
             max_tokens=4096,
             temperature=0.7,
             timeout=120,
