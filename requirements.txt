@@ -1,5 +1,4 @@
 crewai[tools]>=1.9.3
-duckduckgo-search>=6.0.0
 streamlit>=1.41.1
 python-dotenv>=1.0.1
 litellm>=1.0.0
