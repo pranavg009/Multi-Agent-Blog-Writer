@@ -52,7 +52,7 @@ def get_llm():
         )
         return llm, "Groq · Llama 3.3 70B"
     except Exception as e:
-        return None, f"Error: {e}"
+        return None, str(e)[:200]
 
 
 # ============================================================
@@ -292,7 +292,7 @@ with st.sidebar:
     if llm:
         st.success(f"✅ {provider} connected")
     else:
-        st.error("❌ GROQ_API_KEY not found.")
+        st.error(f"❌ LLM failed: {provider}")
         # DEBUG — shows exactly what secrets Streamlit can see
         try:
             found_keys = list(st.secrets.keys())
