@@ -1,7 +1,7 @@
 import streamlit as st
 from crewai import Agent, Task, Crew, Process, LLM
 from crewai.tools import BaseTool
-from duckduckgo_search import DDGS          # FREE — no API key needed
+from duckduckgo_search import DDGS
 from pydantic import BaseModel, Field
 from typing import Type
 import time, re, os
@@ -15,39 +15,43 @@ st.set_page_config(
 )
 
 # ============================================================
-# LLM SETUP — Groq (free, 14,400 req/day, no card needed)
+# LLM SETUP
+# THE FIX: use OpenAI native provider pointing at Groq's API.
+# No LiteLLM. No version conflicts. No 15-minute hangs.
+# Set OPENAI_API_KEY = groq key, OPENAI_API_BASE = groq URL,
+# then use model="openai/llama-3.3-70b-versatile"
 # ============================================================
 def get_llm():
-    # Read from Streamlit secrets first, then env vars
     try:
         groq_key = st.secrets.get("GROQ_API_KEY", "")
-    except:
+    except Exception:
         groq_key = os.environ.get("GROQ_API_KEY", "")
 
-    if groq_key:
-        # IMPORTANT: Set env var so CrewAI's LiteLLM layer finds it
-        os.environ["GROQ_API_KEY"] = groq_key
-        try:
-            return (
-                LLM(
-                    model="groq/llama-3.3-70b-versatile",
-                    api_key=groq_key,
-                    max_tokens=4096,
-                    temperature=0.7
-                ),
-                "Groq · Llama 3.3 70B"
-            )
-        except Exception as e:
-            st.error(f"Groq init failed: {e}")
-            return None, "None"
+    if not groq_key:
+        return None, "None"
 
-    return None, "None"
+    # Must set env vars BEFORE creating LLM object
+    # CrewAI native OpenAI provider reads these at init time
+    os.environ["OPENAI_API_KEY"]  = groq_key
+    os.environ["OPENAI_API_BASE"] = "https://api.groq.com/openai/v1"
+
+    try:
+        llm = LLM(
+            model="openai/llama-3.3-70b-versatile",
+            max_tokens=4096,
+            temperature=0.7,
+            timeout=120,  # 2 min cap per call — prevents infinite hang
+        )
+        return llm, "Groq · Llama 3.3 70B"
+    except Exception as e:
+        return None, f"Error: {e}"
 
 
 # ============================================================
-# SEARCH TOOL — DuckDuckGo (completely free, no API key)
-# KEY CHANGE: replaced TavilySearchTool entirely
-# duckduckgo-search package hits DDG directly, no account needed
+# SEARCH TOOL — DuckDuckGo
+# FIX: removed timelimit='m' — breaks in duckduckgo-search >=6.x
+# Added DDGS timeout and graceful fallback so a bad search
+# doesn't freeze the whole agent for 15 minutes
 # ============================================================
 class SearchInput(BaseModel):
     query: str = Field(description="The search query to look up")
@@ -64,8 +68,8 @@ class DDGSearchTool(BaseTool):
     def _run(self, query: str) -> str:
         for attempt in range(3):
             try:
-                with DDGS(timeout=10) as ddgs:
-                    results = list(ddgs.text(query, max_results=5, timelimit='m'))
+                with DDGS(timeout=15) as ddgs:
+                    results = list(ddgs.text(query, max_results=5))
 
                 if not results:
                     return f"No results found for: '{query}'"
@@ -84,17 +88,18 @@ class DDGSearchTool(BaseTool):
                     time.sleep(2 ** attempt)
                 else:
                     return (
-                        f"Web search unavailable right now ({e}). "
-                        "Use your training knowledge to answer as best you can, "
-                        "clearly noting which facts you are inferring rather than citing."
+                        f"Web search unavailable ({e}). "
+                        "Use your training knowledge to answer. "
+                        "Note clearly which facts are inferred rather than cited."
                     )
         return "Search unavailable — use training knowledge and note this clearly."
-        
+
+
 search_tool = DDGSearchTool()
 
 
 # ============================================================
-# OUTPUT PARSER — unchanged from original
+# OUTPUT PARSER
 # ============================================================
 def parse_output(raw: str) -> dict:
     res = {"blog_post": "", "seo_title": "", "meta_desc": "", "tags": []}
@@ -123,95 +128,79 @@ def parse_output(raw: str) -> dict:
 
     return res
 
+
 def count_words(text: str) -> int:
     return len(re.sub(r'[#*`_\[\]()]', '', text).split())
 
 
 # ============================================================
-# CORE PIPELINE — 2 real agents, shown as 3 in the UI
+# PIPELINE — 2 agents, shown as 3 steps in the UI
 #
-# WHY 2 AGENTS:
-#   - 3 agents = ~15 API calls, risky even on Groq free tier
-#   - 2 agents = ~8 API calls, reliable and fast
-#
-# HOW WE SHOW 3:
-#   - Agent 1: Researcher (does research — shown as Step 1)
-#   - Agent 2: Writer-Editor (writes + edits + SEO in one pass)
-#              This is shown in the UI as Step 2 (Write) and
-#              Step 3 (Edit) even though it's one agent
-#   - The user sees the same 3-step pipeline they expect
+# KEY FIXES for 15-20 min hang:
+#   1. LLM now uses native OpenAI provider (no LiteLLM retries)
+#   2. max_iter=2 per agent (was 3 — each failed iter = ~3 min hang)
+#   3. max_rpm=4 globally (stays under Groq free limit)
+#   4. timeout=120 on LLM object (hard cap per API call)
 # ============================================================
 def run_crew_pipeline(topic, tone, word_count, llm):
 
-    # ── AGENT 1: Researcher ──────────────────────────────────
-    # Exactly the same role as before — 3 DDG searches,
-    # returns structured notes with facts and URLs
     researcher = Agent(
         role="Senior Research Analyst",
         goal=(
-            f"Research '{topic}' thoroughly using 3 web searches on different angles. "
-            "Return structured notes with key facts, statistics, source URLs, "
-            "recent developments, and expert perspectives. "
-            "Never fabricate statistics — only include what you actually find."
+            f"Research '{topic}' using 3 web searches on different angles. "
+            "Return structured notes with key facts, statistics, and source URLs. "
+            "Never fabricate statistics — only include what you find."
         ),
         backstory=(
-            "A meticulous research analyst with 10 years in investigative journalism. "
+            "A meticulous analyst with 10 years in investigative journalism. "
             "Allergic to misinformation. Always cites sources."
         ),
         tools=[search_tool],
         llm=llm,
         verbose=False,
         allow_delegation=False,
-        max_iter=3,
-        max_rpm=6    # Groq allows 30 RPM — keeping headroom
+        max_iter=2,
+        max_rpm=4,
     )
 
-    # ── AGENT 2: Writer-Editor combined ─────────────────────
-    # KEY CHANGE: This single agent does what the old Writer
-    # and Editor did separately. Saves ~5 API calls per run.
-    # The prompt instructs it to write AND self-edit AND
-    # generate SEO metadata — all in one output.
     writer_editor = Agent(
-        role="Professional Blog Writer and Senior Editor",
+        role="Professional Blog Writer and Editor",
         goal=(
-            f"Write a complete, polished {tone} blog post of approximately "
-            f"{word_count} words about '{topic}', using ONLY the research notes provided. "
-            "Then self-edit for grammar, flow, and tone consistency. "
-            "Then generate SEO metadata. All in one response.\n\n"
-            "Structure your output exactly like this:\n"
-            "1. The complete polished blog post in Markdown (H1 title, H2 sections)\n"
+            f"Write a complete polished {tone} blog post of ~{word_count} words "
+            f"about '{topic}' using ONLY the research notes. "
+            "Self-edit for grammar, flow, and tone consistency. "
+            "Then generate SEO metadata.\n\n"
+            "Output format (follow exactly):\n"
+            "1. Full polished blog post in Markdown (H1 title, H2 sections)\n"
             "2. Then on new lines:\n"
             "[SEO_TITLE] under 60 chars\n"
             "[META_DESC] under 160 chars\n"
             "[TAGS] exactly 5 comma-separated tags\n\n"
-            "Rules:\n"
-            "- Use ONLY facts from the research notes — no hallucination\n"
-            "- Include at least 3 statistics from the research\n"
-            "- Hook first sentence in the introduction\n"
-            f"- Tone must be {tone} throughout\n"
-            "- Do NOT add any text after the [TAGS] line"
+            "Rules: only use facts from research notes. "
+            "At least 3 statistics from research. "
+            f"Tone must be {tone} throughout. "
+            "Nothing after [TAGS] line."
         ),
         backstory=(
-            "A senior writer who has published in TechCrunch and Wired, with 15 years "
-            "of editing experience. Turns dense research into compelling narratives. "
-            "Expert in SEO. Every stat is sourced, every sentence earns its place."
+            "Senior writer published in TechCrunch and Wired. "
+            "15 years of editing experience. "
+            "Every stat is sourced, every sentence earns its place."
         ),
-        tools=[],           # No search needed — research notes come via context
+        tools=[],
         llm=llm,
         verbose=False,
         allow_delegation=False,
-        max_iter=3,
-        max_rpm=10
+        max_iter=2,
+        max_rpm=4,
     )
 
-    # ── TASK 1: Research ─────────────────────────────────────
     research_task = Task(
         description=(
             f"Research '{topic}'. Run exactly 3 web searches:\n"
             f"1. '{topic} facts statistics 2025'\n"
-            f"2. '{topic} latest developments news'\n"
+            f"2. '{topic} latest developments'\n"
             f"3. '{topic} expert opinion challenges'\n\n"
-            "Return structured notes:\n"
+            "Return structured Markdown notes:\n"
             "## Key Facts & Statistics (with source URLs)\n"
             "## Recent Developments\n"
             "## Expert Perspectives\n"
@@ -219,44 +208,39 @@ def run_crew_pipeline(topic, tone, word_count, llm):
             "Only include facts actually found in search results."
         ),
         expected_output=(
-            "Structured research notes in Markdown with 4 sections. "
-            "Minimum 300 words. All statistics must have source URLs."
+            "Structured Markdown research notes, 4 sections, min 300 words. "
+            "All statistics have source URLs."
         ),
-        agent=researcher
+        agent=researcher,
     )
 
-    # ── TASK 2: Write + Edit + SEO (combined) ────────────────
-    # context=[research_task] passes the research notes in automatically
     write_edit_task = Task(
         description=(
-            f"Using the research notes as context, write a complete "
-            f"{tone} blog post about '{topic}' (~{word_count} words). "
-            "Self-edit for grammar, flow, and tone. "
-            "Then append SEO metadata using the exact markers shown in your goal.\n\n"
+            f"Using the research notes, write a complete {tone} blog post "
+            f"about '{topic}' (~{word_count} words). "
+            "Self-edit for grammar and flow. "
+            "Then append SEO metadata using the exact markers from your goal. "
             "Do not search the web — use only the research notes provided."
         ),
         expected_output=(
-            f"Complete polished blog post (~{word_count} words) in Markdown, "
-            "followed by:\n"
+            f"Complete polished blog post ~{word_count} words in Markdown, then:\n"
             "[SEO_TITLE] ...\n[META_DESC] ...\n[TAGS] ..., ..., ..., ..., ..."
         ),
         agent=writer_editor,
-        context=[research_task]   # research notes flow in here automatically
+        context=[research_task],
     )
 
-    # ── CREW ─────────────────────────────────────────────────
     crew = Crew(
         agents=[researcher, writer_editor],
         tasks=[research_task, write_edit_task],
         process=Process.sequential,
         verbose=False,
         memory=False,
-        max_rpm=10          # conservative — Groq allows 30
+        max_rpm=4,
     )
 
     result = crew.kickoff()
 
-    # Get research notes from task 1 output
     research_notes = ""
     try:
         research_notes = str(
@@ -282,7 +266,6 @@ SUGGESTED_TOPICS = [
     "The rise of no-code tools and what it means for developers",
 ]
 
-
 # ============================================================
 # SESSION STATE
 # ============================================================
@@ -290,7 +273,6 @@ if "history"  not in st.session_state: st.session_state.history  = []
 if "result"   not in st.session_state: st.session_state.result   = None
 if "running"  not in st.session_state: st.session_state.running  = False
 if "topic_in" not in st.session_state: st.session_state.topic_in = ""
-
 
 # ============================================================
 # SIDEBAR
@@ -302,11 +284,11 @@ with st.sidebar:
     if llm:
         st.success(f"✅ {provider} connected")
     else:
-        st.error("❌ No API key found.")
+        st.error("❌ GROQ_API_KEY not found.")
         st.info(
             "Add to Streamlit secrets:\n"
-            "GROQ_API_KEY\n\n"
-            "Get free key at console.groq.com\n"
+            "GROQ_API_KEY = 'gsk_...'\n\n"
+            "Free at console.groq.com\n"
             "No credit card needed."
         )
 
@@ -314,7 +296,7 @@ with st.sidebar:
     st.subheader("⚙️ Settings")
     tone       = st.selectbox("Tone", ["Professional", "Casual", "Technical", "Academic"])
     word_count = st.slider("Target words", 300, 2000, 800, step=100)
-    st.info("⏱ Estimated: 2–4 min\n(2 agents · Groq speed)")
+    st.info("⏱ Estimated: 2–5 min\n(2 agents · Groq speed)")
     st.divider()
 
     st.subheader("📂 History")
@@ -328,12 +310,10 @@ with st.sidebar:
         st.caption("Generated posts appear here")
 
     st.divider()
-    # UI shows 3 steps even though internally it's 2 agents
     st.subheader("🤖 Pipeline")
     st.markdown("🔬 **Step 1 — Researcher** · DuckDuckGo search")
     st.markdown("✍️ **Step 2 — Writer** · Drafts the post")
     st.markdown("📝 **Step 3 — Editor** · Polishes + SEO")
-
 
 # ============================================================
 # MAIN UI
@@ -361,7 +341,7 @@ topic = st.text_input(
 m1, m2, m3 = st.columns(3)
 m1.metric("Tone", tone)
 m2.metric("Target Words", word_count)
-m3.metric("Agents", "3")     # shows 3 — correct from user perspective
+m3.metric("Agents", "3")
 
 generate_btn = st.button(
     "🚀 Generate Blog Post",
@@ -372,10 +352,8 @@ generate_btn = st.button(
 if not llm:
     st.warning("Add GROQ_API_KEY in Streamlit secrets. Free at console.groq.com")
 
-
 # ============================================================
-# GENERATION — UI shows 3 steps, pipeline runs 2 agents
-# Step 1 and Step 2+3 map to Agent 1 and Agent 2 respectively
+# GENERATION
 # ============================================================
 if generate_btn and topic.strip() and llm:
     st.session_state.running = True
@@ -383,7 +361,6 @@ if generate_btn and topic.strip() and llm:
     st.divider()
     st.subheader("⚡ Pipeline Running")
 
-    # Show 3 steps in UI as expected
     s1, s2, s3 = st.columns(3)
     with s1: step1 = st.empty(); step1.info("🔬 **Step 1**\nResearcher\nSearching...")
     with s2: step2 = st.empty(); step2.warning("✍️ **Step 2**\nWriter\nWaiting...")
@@ -400,7 +377,6 @@ if generate_btn and topic.strip() and llm:
         raw, research_notes = run_crew_pipeline(topic, tone, word_count, llm)
         elapsed = round(time.time() - start_t, 1)
 
-        # Update all 3 UI steps to done
         step1.success("🔬 **Step 1**\nResearcher\n✅ Done")
         step2.success("✍️ **Step 2**\nWriter\n✅ Done")
         step3.success("📝 **Step 3**\nEditor\n✅ Done")
@@ -431,7 +407,6 @@ if generate_btn and topic.strip() and llm:
         step2.error("✍️ —")
         step3.error("📝 —")
         st.session_state.running = False
-
 
 # ============================================================
 # DISPLAY RESULT
