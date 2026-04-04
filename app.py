@@ -28,13 +28,13 @@ def get_llm():
         os.environ["OPENROUTER_API_KEY"] = openrouter_key
         return (
             LLM(
-                model="openrouter/meta-llama/llama-3.1-8b-instruct:free",
+                model="google/gemma-4-26b-a4b-it",
                 api_key=openrouter_key,
                 api_base="https://openrouter.ai/api/v1",
                 max_tokens=4096,
                 temperature=0.7
             ),
-            "OpenRouter (Llama 3.1 8B Free)"
+            "OpenRouter (Gemma 4 26B A4B)"
         )
     return None, "None"
     
