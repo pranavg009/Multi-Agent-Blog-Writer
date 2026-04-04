@@ -20,26 +20,21 @@ st.set_page_config(
 # NOTE: no @st.cache_resource — avoids caching None on cold start
 def get_llm():
     try:
-        anthropic_key = st.secrets.get("ANTHROPIC_API_KEY", "")
+        openrouter_key = st.secrets.get("OPENROUTER_API_KEY", "")
     except:
-        anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    try:
-        gemini_key = st.secrets.get("GEMINI_API_KEY", "")
-    except:
-        gemini_key = os.environ.get("GEMINI_API_KEY", "")
+        openrouter_key = os.environ.get("OPENROUTER_API_KEY", "")
 
-    if anthropic_key:
+    if openrouter_key:
+        os.environ["OPENROUTER_API_KEY"] = openrouter_key
         return (
-            LLM(model="anthropic/claude-haiku-4-5-20251001",
-                max_tokens=4096, temperature=0.7),
-            "Claude (Haiku)"
-        )
-    if gemini_key:
-        os.environ["GEMINI_API_KEY"] = gemini_key
-        return (
-            LLM(model="gemini/gemini-2.5-flash",
-                max_tokens=4096, temperature=0.7),
-            "Gemini (2.5 flash)"
+            LLM(
+                model="openrouter/meta-llama/llama-3.1-8b-instruct:free",
+                api_key=openrouter_key,
+                api_base="https://openrouter.ai/api/v1",
+                max_tokens=4096,
+                temperature=0.7
+            ),
+            "OpenRouter (Llama 3.1 8B Free)"
         )
     return None, "None"
     
