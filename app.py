@@ -1,4 +1,3 @@
-pip install litellm
 import streamlit as st
 from crewai import Agent, Task, Crew, Process, LLM
 from crewai.tools import BaseTool
