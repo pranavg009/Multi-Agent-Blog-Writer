@@ -293,13 +293,18 @@ with st.sidebar:
         st.success(f"✅ {provider} connected")
     else:
         st.error("❌ GROQ_API_KEY not found.")
+        # DEBUG — shows exactly what secrets Streamlit can see
+        try:
+            found_keys = list(st.secrets.keys())
+            st.warning(f"Secrets found: {found_keys}")
+        except Exception as e:
+            st.warning(f"Secrets object error: {e}")
         st.info(
             "Add to Streamlit secrets:\n"
             "GROQ_API_KEY = 'gsk_...'\n\n"
             "Free at console.groq.com\n"
             "No credit card needed."
         )
-
     st.divider()
     st.subheader("⚙️ Settings")
     tone       = st.selectbox("Tone", ["Professional", "Casual", "Technical", "Academic"])
