@@ -25,16 +25,20 @@ def get_llm():
         openrouter_key = os.environ.get("OPENROUTER_API_KEY", "")
 
     if openrouter_key:
+        # These 3 env vars are what CrewAI's LiteLLM actually reads
         os.environ["OPENROUTER_API_KEY"] = openrouter_key
+        os.environ["OPENAI_API_BASE"] = "https://openrouter.ai/api/v1"
+        os.environ["OPENAI_MODEL_NAME"] = "openrouter/meta-llama/llama-3.3-70b-instruct:free"
+
         return (
             LLM(
-                model="openrouter/mistralai/mistral-small-3.1-24b-instruct:free",
+                model="openrouter/meta-llama/llama-3.3-70b-instruct:free",
                 api_key=openrouter_key,
-                api_base="https://openrouter.ai/api/v1",
+                base_url="https://openrouter.ai/api/v1",
                 max_tokens=4096,
                 temperature=0.7
             ),
-            "OpenRouter (Mistral Small 3.1)"
+            "OpenRouter (Llama 3.3 70B)"
         )
     return None, "None"
     
