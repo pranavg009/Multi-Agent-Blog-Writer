@@ -28,7 +28,7 @@ def get_llm():
         os.environ["OPENROUTER_API_KEY"] = openrouter_key
         return (
             LLM(
-                model="openrouter/meta-llama/llama-3.3-70b-instruct:free",
+                model="openrouter/deepseek/deepseek-r1:free",
                 api_key=openrouter_key,
                 api_base="https://openrouter.ai/api/v1",
                 max_tokens=4096,
@@ -172,7 +172,7 @@ def run_crew_pipeline(topic, tone, word_count, llm):
         agents=[researcher, writer, editor],
         tasks=[t1, t2, t3],
         process=Process.sequential,
-        verbose=False, memory=False, max_rpm=8
+        verbose=False, memory=False, max_rpm=3
     )
     result = crew.kickoff()
     research = ""
