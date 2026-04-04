@@ -28,13 +28,13 @@ def get_llm():
         os.environ["OPENROUTER_API_KEY"] = openrouter_key
         return (
             LLM(
-                model="openrouter/deepseek/deepseek-r1:free",
+                model="openrouter/mistralai/mistral-small-3.1-24b-instruct:free",
                 api_key=openrouter_key,
                 api_base="https://openrouter.ai/api/v1",
                 max_tokens=4096,
                 temperature=0.7
             ),
-            "OpenRouter (Llama 3.3 70B Free)"
+            "OpenRouter (Mistral Small 3.1)"
         )
     return None, "None"
     
