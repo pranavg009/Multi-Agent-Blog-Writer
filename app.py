@@ -28,7 +28,7 @@ def get_llm():
         os.environ["OPENROUTER_API_KEY"] = openrouter_key
         return (
             LLM(
-                model="meta-llama/llama-3.3-70b-instruct:free",
+                model="openrouter/meta-llama/llama-3.3-70b-instruct:free",
                 api_key=openrouter_key,
                 api_base="https://openrouter.ai/api/v1",
                 max_tokens=4096,
