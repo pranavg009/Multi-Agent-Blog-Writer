@@ -22,29 +22,19 @@ st.set_page_config(
 # then use model="openai/llama-3.3-70b-versatile"
 # ============================================================
 def get_llm():
-    # Streamlit Cloud loads secrets into st.secrets as a dict
-    # Access directly — don't use .get() which can fail silently
     groq_key = ""
-
     try:
         groq_key = st.secrets["GROQ_API_KEY"]
-    except KeyError:
-        pass
-
-    if not groq_key:
-        try:
-            groq_key = os.environ.get("GROQ_API_KEY", "")
-        except Exception:
-            pass
+    except Exception:
+        groq_key = os.environ.get("GROQ_API_KEY", "")
 
     if not groq_key:
         return None, "None"
 
-    os.environ["GROQ_API_KEY"] = groq_key
-
     try:
         llm = LLM(
-            model="groq/llama-3.3-70b-versatile",
+            model="openai/llama-3.3-70b-versatile",
+            base_url="https://api.groq.com/openai/v1",
             api_key=groq_key,
             max_tokens=4096,
             temperature=0.7,
