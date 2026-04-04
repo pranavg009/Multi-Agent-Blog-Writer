@@ -16,10 +16,10 @@ st.set_page_config(
 
 # ============================================================
 # LLM SETUP
-# THE FIX: use OpenAI native provider pointing at Groq's API.
-# No LiteLLM. No version conflicts. No 15-minute hangs.
-# Set OPENAI_API_KEY = groq key, OPENAI_API_BASE = groq URL,
-# then use model="openai/llama-3.3-70b-versatile"
+# THE FIX: Set GROQ_API_KEY as an OS environment variable FIRST,
+# then use model="groq/llama-3.3-70b-versatile" with NO base_url
+# or api_key in the constructor. LiteLLM reads from env vars and
+# correctly routes to Groq. Passing base_url breaks provider detection.
 # ============================================================
 def get_llm():
     groq_key = ""
@@ -29,27 +29,26 @@ def get_llm():
         groq_key = os.environ.get("GROQ_API_KEY", "")
 
     if not groq_key:
-        return None, "None"
+        return None, "GROQ_API_KEY not found in secrets or environment"
+
+    # CRITICAL: Set as env var so LiteLLM (used by CrewAI) can find it
+    os.environ["GROQ_API_KEY"] = groq_key
 
     try:
         llm = LLM(
-            model="openai/llama-3.3-70b-versatile",
-            base_url="https://api.groq.com/openai/v1",
-            api_key=groq_key,
+            model="groq/llama-3.3-70b-versatile",
+            # Do NOT pass base_url or api_key here — it breaks LiteLLM routing
             max_tokens=4096,
             temperature=0.7,
             timeout=120,
         )
         return llm, "Groq · Llama 3.3 70B"
     except Exception as e:
-        return None, str(e)[:200]
+        return None, str(e)[:300]
 
 
 # ============================================================
 # SEARCH TOOL — DuckDuckGo
-# FIX: removed timelimit='m' — breaks in duckduckgo-search >=6.x
-# Added DDGS timeout and graceful fallback so a bad search
-# doesn't freeze the whole agent for 15 minutes
 # ============================================================
 class SearchInput(BaseModel):
     query: str = Field(description="The search query to look up")
@@ -132,13 +131,7 @@ def count_words(text: str) -> int:
 
 
 # ============================================================
-# PIPELINE — 2 agents, shown as 3 steps in the UI
-#
-# KEY FIXES for 15-20 min hang:
-#   1. LLM now uses native OpenAI provider (no LiteLLM retries)
-#   2. max_iter=2 per agent (was 3 — each failed iter = ~3 min hang)
-#   3. max_rpm=4 globally (stays under Groq free limit)
-#   4. timeout=120 on LLM object (hard cap per API call)
+# PIPELINE
 # ============================================================
 def run_crew_pipeline(topic, tone, word_count, llm):
 
@@ -282,18 +275,11 @@ with st.sidebar:
     if llm:
         st.success(f"✅ {provider} connected")
     else:
-        st.error(f"❌ LLM failed: {provider}")
-        # DEBUG — shows exactly what secrets Streamlit can see
-        try:
-            found_keys = list(st.secrets.keys())
-            st.warning(f"Secrets found: {found_keys}")
-        except Exception as e:
-            st.warning(f"Secrets object error: {e}")
+        st.error(f"❌ LLM Error: {provider}")
         st.info(
-            "Add to Streamlit secrets:\n"
-            "GROQ_API_KEY = 'gsk_...'\n\n"
-            "Free at console.groq.com\n"
-            "No credit card needed."
+            "Add your Groq key to Streamlit secrets:\n\n"
+            "```\nGROQ_API_KEY = 'gsk_...'\n```\n\n"
+            "Free at console.groq.com — no credit card needed."
         )
     st.divider()
     st.subheader("⚙️ Settings")
