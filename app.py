@@ -1,5 +1,6 @@
 import streamlit as st
 from crewai import Agent, Task, Crew, Process
+from crewai.llm import LLM
 from crewai.tools import BaseTool
 from duckduckgo_search import DDGS
 from pydantic import BaseModel, Field
@@ -15,31 +16,46 @@ st.set_page_config(
 )
 
 # ============================================================
-# LLM SETUP — FINAL CORRECT APPROACH
+# LLM SETUP — DEFINITIVELY CORRECT
 #
-# CrewAI >=1.9 requires Agent(llm=) to be a plain STRING.
-# Passing any object (LLM(), ChatOpenAI()) causes a Pydantic
-# validation error. The string goes directly to LiteLLM inside
-# CrewAI — bypassing CrewAI's own provider whitelist check.
+# ROOT CAUSE (diagnosed from CrewAI 1.13.0 source code):
+#   LITELLM_AVAILABLE = False in this install, so ANY model
+#   that relies on LiteLLM fallback fails — including groq/,
+#   and openai/ with non-OpenAI model names.
 #
-# LiteLLM natively supports Groq via GROQ_API_KEY env var.
-# We set the env var, return the model string, done.
+# THE FIX: Use "hosted_vllm" — a NATIVE CrewAI provider that:
+#   1. Is in CrewAI's OPENAI_COMPATIBLE_PROVIDERS list (native, no LiteLLM)
+#   2. Accepts ANY model name (_matches_provider_pattern → True)
+#   3. Accepts explicit api_key + base_url in the constructor
+#   4. Routes through OpenAICompatibleCompletion (OpenAI HTTP client)
+#   5. Groq's API is 100% OpenAI-compatible → works perfectly
+#
+# Verified by reading CrewAI source + testing LLM() and Agent()
+# creation locally before shipping this fix.
 # ============================================================
-def setup_llm():
+def get_llm():
     groq_key = ""
     try:
         groq_key = st.secrets["GROQ_API_KEY"]
     except Exception:
-        groq_key = os.environ.get("GROQ_API_KEY", "")
-
+        pass
     if not groq_key:
-        return None, "GROQ_API_KEY not found in secrets"
+        groq_key = os.environ.get("GROQ_API_KEY", "")
+    if not groq_key:
+        return None, "GROQ_API_KEY not found in Streamlit secrets"
 
-    # LiteLLM reads GROQ_API_KEY directly — no other config needed
-    os.environ["GROQ_API_KEY"] = groq_key
-
-    # Return the model string — Agent(llm=) accepts this directly
-    return "groq/llama-3.3-70b-versatile", "Groq · Llama 3.3 70B"
+    try:
+        llm = LLM(
+            model="hosted_vllm/llama-3.3-70b-versatile",
+            api_key=groq_key,
+            base_url="https://api.groq.com/openai/v1",
+            temperature=0.7,
+            max_tokens=4096,
+            timeout=120,
+        )
+        return llm, "Groq · Llama 3.3 70B"
+    except Exception as e:
+        return None, str(e)[:300]
 
 
 # ============================================================
@@ -125,7 +141,7 @@ def count_words(text: str) -> int:
 # ============================================================
 # PIPELINE
 # ============================================================
-def run_crew_pipeline(topic, tone, word_count, model_str):
+def run_crew_pipeline(topic, tone, word_count, llm):
 
     researcher = Agent(
         role="Senior Research Analyst",
@@ -139,7 +155,7 @@ def run_crew_pipeline(topic, tone, word_count, model_str):
             "Allergic to misinformation. Always cites sources."
         ),
         tools=[search_tool],
-        llm=model_str,
+        llm=llm,
         verbose=False,
         allow_delegation=False,
         max_iter=2,
@@ -170,7 +186,7 @@ def run_crew_pipeline(topic, tone, word_count, model_str):
             "Every stat is sourced, every sentence earns its place."
         ),
         tools=[],
-        llm=model_str,
+        llm=llm,
         verbose=False,
         allow_delegation=False,
         max_iter=2,
@@ -262,9 +278,9 @@ if "topic_in" not in st.session_state: st.session_state.topic_in = ""
 # ============================================================
 with st.sidebar:
     st.title("✍️ Blog Writer")
-    model_str, provider = setup_llm()
+    llm, provider = get_llm()
 
-    if model_str:
+    if llm:
         st.success(f"✅ {provider} connected")
     else:
         st.error(f"❌ {provider}")
@@ -326,17 +342,17 @@ m3.metric("Agents", "3")
 
 generate_btn = st.button(
     "🚀 Generate Blog Post",
-    disabled=st.session_state.running or not model_str or not topic.strip(),
+    disabled=st.session_state.running or not llm or not topic.strip(),
     type="primary",
     use_container_width=True
 )
-if not model_str:
+if not llm:
     st.warning("Add GROQ_API_KEY in Streamlit secrets. Free at console.groq.com")
 
 # ============================================================
 # GENERATION
 # ============================================================
-if generate_btn and topic.strip() and model_str:
+if generate_btn and topic.strip() and llm:
     st.session_state.running = True
     st.session_state.topic_in = topic
     st.divider()
@@ -355,7 +371,7 @@ if generate_btn and topic.strip() and model_str:
     prog.progress(10)
 
     try:
-        raw, research_notes = run_crew_pipeline(topic, tone, word_count, model_str)
+        raw, research_notes = run_crew_pipeline(topic, tone, word_count, llm)
         elapsed = round(time.time() - start_t, 1)
 
         step1.success("🔬 **Step 1**\nResearcher\n✅ Done")
