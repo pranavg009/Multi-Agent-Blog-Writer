@@ -1,7 +1,6 @@
 import streamlit as st
 from crewai import Agent, Task, Crew, Process
 from crewai.tools import BaseTool
-from langchain_openai import ChatOpenAI
 from duckduckgo_search import DDGS
 from pydantic import BaseModel, Field
 from typing import Type
@@ -16,16 +15,17 @@ st.set_page_config(
 )
 
 # ============================================================
-# LLM SETUP — THE REAL FIX
+# LLM SETUP — FINAL CORRECT APPROACH
 #
-# CrewAI's own LLM() class has a hardcoded provider whitelist
-# that blocks everything we tried. The solution: bypass it
-# entirely. CrewAI accepts LangChain's ChatOpenAI directly as
-# the llm= param on any Agent. Groq is OpenAI-compatible so
-# we just point ChatOpenAI at Groq's endpoint. No validation,
-# no provider list, no errors. This is how it was meant to work.
+# CrewAI >=1.9 requires Agent(llm=) to be a plain STRING.
+# Passing any object (LLM(), ChatOpenAI()) causes a Pydantic
+# validation error. The string goes directly to LiteLLM inside
+# CrewAI — bypassing CrewAI's own provider whitelist check.
+#
+# LiteLLM natively supports Groq via GROQ_API_KEY env var.
+# We set the env var, return the model string, done.
 # ============================================================
-def get_llm():
+def setup_llm():
     groq_key = ""
     try:
         groq_key = st.secrets["GROQ_API_KEY"]
@@ -35,18 +35,11 @@ def get_llm():
     if not groq_key:
         return None, "GROQ_API_KEY not found in secrets"
 
-    try:
-        llm = ChatOpenAI(
-            model="llama-3.3-70b-versatile",
-            base_url="https://api.groq.com/openai/v1",
-            api_key=groq_key,
-            temperature=0.7,
-            max_tokens=4096,
-            timeout=120,
-        )
-        return llm, "Groq · Llama 3.3 70B"
-    except Exception as e:
-        return None, str(e)[:300]
+    # LiteLLM reads GROQ_API_KEY directly — no other config needed
+    os.environ["GROQ_API_KEY"] = groq_key
+
+    # Return the model string — Agent(llm=) accepts this directly
+    return "groq/llama-3.3-70b-versatile", "Groq · Llama 3.3 70B"
 
 
 # ============================================================
@@ -132,7 +125,7 @@ def count_words(text: str) -> int:
 # ============================================================
 # PIPELINE
 # ============================================================
-def run_crew_pipeline(topic, tone, word_count, llm):
+def run_crew_pipeline(topic, tone, word_count, model_str):
 
     researcher = Agent(
         role="Senior Research Analyst",
@@ -146,7 +139,7 @@ def run_crew_pipeline(topic, tone, word_count, llm):
             "Allergic to misinformation. Always cites sources."
         ),
         tools=[search_tool],
-        llm=llm,
+        llm=model_str,
         verbose=False,
         allow_delegation=False,
         max_iter=2,
@@ -177,7 +170,7 @@ def run_crew_pipeline(topic, tone, word_count, llm):
             "Every stat is sourced, every sentence earns its place."
         ),
         tools=[],
-        llm=llm,
+        llm=model_str,
         verbose=False,
         allow_delegation=False,
         max_iter=2,
@@ -269,9 +262,9 @@ if "topic_in" not in st.session_state: st.session_state.topic_in = ""
 # ============================================================
 with st.sidebar:
     st.title("✍️ Blog Writer")
-    llm, provider = get_llm()
+    model_str, provider = setup_llm()
 
-    if llm:
+    if model_str:
         st.success(f"✅ {provider} connected")
     else:
         st.error(f"❌ {provider}")
@@ -333,17 +326,17 @@ m3.metric("Agents", "3")
 
 generate_btn = st.button(
     "🚀 Generate Blog Post",
-    disabled=st.session_state.running or not llm or not topic.strip(),
+    disabled=st.session_state.running or not model_str or not topic.strip(),
     type="primary",
     use_container_width=True
 )
-if not llm:
+if not model_str:
     st.warning("Add GROQ_API_KEY in Streamlit secrets. Free at console.groq.com")
 
 # ============================================================
 # GENERATION
 # ============================================================
-if generate_btn and topic.strip() and llm:
+if generate_btn and topic.strip() and model_str:
     st.session_state.running = True
     st.session_state.topic_in = topic
     st.divider()
@@ -362,7 +355,7 @@ if generate_btn and topic.strip() and llm:
     prog.progress(10)
 
     try:
-        raw, research_notes = run_crew_pipeline(topic, tone, word_count, llm)
+        raw, research_notes = run_crew_pipeline(topic, tone, word_count, model_str)
         elapsed = round(time.time() - start_t, 1)
 
         step1.success("🔬 **Step 1**\nResearcher\n✅ Done")
