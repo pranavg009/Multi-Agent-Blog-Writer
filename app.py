@@ -1,6 +1,7 @@
 import streamlit as st
-from crewai import Agent, Task, Crew, Process, LLM
+from crewai import Agent, Task, Crew, Process
 from crewai.tools import BaseTool
+from langchain_openai import ChatOpenAI
 from duckduckgo_search import DDGS
 from pydantic import BaseModel, Field
 from typing import Type
@@ -15,16 +16,14 @@ st.set_page_config(
 )
 
 # ============================================================
-# LLM SETUP
-# ROOT CAUSE: CrewAI's LLM only accepts these native prefixes:
-# openai, anthropic, claude, azure, google, gemini, bedrock,
-# aws, openrouter, deepseek, ollama, cerebras, dashscope, etc.
-# "groq" is NOT in that list — groq/model always fails.
+# LLM SETUP — THE REAL FIX
 #
-# CORRECT FIX: Use "openai/" prefix (which IS supported) and
-# point it at Groq's OpenAI-compatible endpoint by setting
-# OPENAI_API_KEY + OPENAI_BASE_URL as env vars.
-# Never pass base_url/api_key in the LLM constructor itself.
+# CrewAI's own LLM() class has a hardcoded provider whitelist
+# that blocks everything we tried. The solution: bypass it
+# entirely. CrewAI accepts LangChain's ChatOpenAI directly as
+# the llm= param on any Agent. Groq is OpenAI-compatible so
+# we just point ChatOpenAI at Groq's endpoint. No validation,
+# no provider list, no errors. This is how it was meant to work.
 # ============================================================
 def get_llm():
     groq_key = ""
@@ -36,15 +35,13 @@ def get_llm():
     if not groq_key:
         return None, "GROQ_API_KEY not found in secrets"
 
-    # Redirect the OpenAI provider to Groq's compatible endpoint
-    os.environ["OPENAI_API_KEY"]  = groq_key
-    os.environ["OPENAI_BASE_URL"] = "https://api.groq.com/openai/v1"
-
     try:
-        llm = LLM(
-            model="openai/llama-3.3-70b-versatile",
-            max_tokens=4096,
+        llm = ChatOpenAI(
+            model="llama-3.3-70b-versatile",
+            base_url="https://api.groq.com/openai/v1",
+            api_key=groq_key,
             temperature=0.7,
+            max_tokens=4096,
             timeout=120,
         )
         return llm, "Groq · Llama 3.3 70B"
@@ -72,10 +69,8 @@ class DDGSearchTool(BaseTool):
             try:
                 with DDGS(timeout=15) as ddgs:
                     results = list(ddgs.text(query, max_results=5))
-
                 if not results:
                     return f"No results found for: '{query}'"
-
                 output = [f"Search results for: '{query}'\n{'='*50}\n"]
                 for i, r in enumerate(results, 1):
                     output.append(
@@ -84,7 +79,6 @@ class DDGSearchTool(BaseTool):
                         f"   {r.get('body', '')[:400]}\n"
                     )
                 return "\n".join(output)
-
             except Exception as e:
                 if attempt < 2:
                     time.sleep(2 ** attempt)
