@@ -16,22 +16,9 @@ st.set_page_config(
 )
 
 # ============================================================
-# LLM SETUP — DEFINITIVELY CORRECT
-#
-# ROOT CAUSE (diagnosed from CrewAI 1.13.0 source code):
-#   LITELLM_AVAILABLE = False in this install, so ANY model
-#   that relies on LiteLLM fallback fails — including groq/,
-#   and openai/ with non-OpenAI model names.
-#
-# THE FIX: Use "hosted_vllm" — a NATIVE CrewAI provider that:
-#   1. Is in CrewAI's OPENAI_COMPATIBLE_PROVIDERS list (native, no LiteLLM)
-#   2. Accepts ANY model name (_matches_provider_pattern → True)
-#   3. Accepts explicit api_key + base_url in the constructor
-#   4. Routes through OpenAICompatibleCompletion (OpenAI HTTP client)
-#   5. Groq's API is 100% OpenAI-compatible → works perfectly
-#
-# Verified by reading CrewAI source + testing LLM() and Agent()
-# creation locally before shipping this fix.
+# LLM — hosted_vllm routes through CrewAI's native
+# OpenAICompatibleCompletion (no LiteLLM needed).
+# Groq's API is OpenAI-compatible: just pass api_key + base_url.
 # ============================================================
 def get_llm():
     groq_key = ""
@@ -43,7 +30,6 @@ def get_llm():
         groq_key = os.environ.get("GROQ_API_KEY", "")
     if not groq_key:
         return None, "GROQ_API_KEY not found in Streamlit secrets"
-
     try:
         llm = LLM(
             model="hosted_vllm/llama-3.3-70b-versatile",
@@ -59,7 +45,7 @@ def get_llm():
 
 
 # ============================================================
-# SEARCH TOOL — DuckDuckGo
+# SEARCH TOOL
 # ============================================================
 class SearchInput(BaseModel):
     query: str = Field(description="The search query to look up")
@@ -67,8 +53,7 @@ class SearchInput(BaseModel):
 class DDGSearchTool(BaseTool):
     name: str = "web_search"
     description: str = (
-        "Search the web using DuckDuckGo. Returns real results with titles, "
-        "URLs, and content snippets. Use for facts, stats, and recent news."
+        "Search the web using DuckDuckGo. Returns titles, URLs and snippets."
     )
     args_schema: Type[BaseModel] = SearchInput
     model_config = {"arbitrary_types_allowed": True}
@@ -83,9 +68,9 @@ class DDGSearchTool(BaseTool):
                 output = [f"Search results for: '{query}'\n{'='*50}\n"]
                 for i, r in enumerate(results, 1):
                     output.append(
-                        f"{i}. {r.get('title', 'No title')}\n"
-                        f"   URL: {r.get('href', '')}\n"
-                        f"   {r.get('body', '')[:400]}\n"
+                        f"{i}. {r.get('title','No title')}\n"
+                        f"   URL: {r.get('href','')}\n"
+                        f"   {r.get('body','')[:400]}\n"
                     )
                 return "\n".join(output)
             except Exception as e:
@@ -94,8 +79,7 @@ class DDGSearchTool(BaseTool):
                 else:
                     return (
                         f"Web search unavailable ({e}). "
-                        "Use your training knowledge to answer. "
-                        "Note clearly which facts are inferred rather than cited."
+                        "Use training knowledge and note which facts are inferred."
                     )
         return "Search unavailable — use training knowledge and note this clearly."
 
@@ -108,29 +92,24 @@ search_tool = DDGSearchTool()
 # ============================================================
 def parse_output(raw: str) -> dict:
     res = {"blog_post": "", "seo_title": "", "meta_desc": "", "tags": []}
-
     for field, marker in [("seo_title", "SEO_TITLE"), ("meta_desc", "META_DESC")]:
         m = re.search(rf'\[{marker}\](.*?)(?:\n|\[|$)', raw, re.IGNORECASE | re.DOTALL)
         if m:
             res[field] = m.group(1).strip()[:160]
-
     m = re.search(r'\[TAGS\](.*?)(?:\n|\[|$)', raw, re.IGNORECASE)
     if m:
         res["tags"] = [t.strip() for t in m.group(1).split(",") if t.strip()][:5]
-
     end = len(raw)
     for mk in ["[SEO_TITLE]", "[META_DESC]", "[TAGS]"]:
         idx = raw.upper().find(mk)
         if idx != -1 and idx < end:
             end = idx
     res["blog_post"] = raw[:end].strip()
-
     if not res["seo_title"]:
         res["blog_post"] = raw.strip()
         res["seo_title"] = "Generated Post"
         res["meta_desc"] = "AI blog post"
         res["tags"] = ["ai", "blog", "content"]
-
     return res
 
 
@@ -140,90 +119,70 @@ def count_words(text: str) -> int:
 
 # ============================================================
 # PIPELINE
+# KEY FIXES FOR SPEED:
+#   - max_rpm removed entirely (was sleeping 60s per 4 calls!)
+#   - max_iter=1 per agent (one shot, no retry loops)
+#   - No Crew-level max_rpm either
 # ============================================================
 def run_crew_pipeline(topic, tone, word_count, llm):
 
     researcher = Agent(
         role="Senior Research Analyst",
         goal=(
-            f"Research '{topic}' using 3 web searches on different angles. "
-            "Return structured notes with key facts, statistics, and source URLs. "
-            "Never fabricate statistics — only include what you find."
+            f"Research '{topic}' using web searches. "
+            "Return structured Markdown notes with key facts, stats, and source URLs."
         ),
-        backstory=(
-            "A meticulous analyst with 10 years in investigative journalism. "
-            "Allergic to misinformation. Always cites sources."
-        ),
+        backstory="Meticulous analyst. Always cites sources. Never fabricates stats.",
         tools=[search_tool],
         llm=llm,
         verbose=False,
         allow_delegation=False,
-        max_iter=2,
-        max_rpm=4,
+        max_iter=1,      # One pass — no retry loops
+        # max_rpm intentionally omitted — avoids 60s sleep blocks
     )
 
     writer_editor = Agent(
         role="Professional Blog Writer and Editor",
         goal=(
-            f"Write a complete polished {tone} blog post of ~{word_count} words "
-            f"about '{topic}' using ONLY the research notes. "
-            "Self-edit for grammar, flow, and tone consistency. "
-            "Then generate SEO metadata.\n\n"
+            f"Write a polished {tone} blog post of ~{word_count} words "
+            f"about '{topic}' using ONLY the research notes provided.\n\n"
             "Output format (follow exactly):\n"
-            "1. Full polished blog post in Markdown (H1 title, H2 sections)\n"
-            "2. Then on new lines:\n"
+            "Full blog post in Markdown (H1 title, H2 sections)\n"
             "[SEO_TITLE] under 60 chars\n"
             "[META_DESC] under 160 chars\n"
-            "[TAGS] exactly 5 comma-separated tags\n\n"
-            "Rules: only use facts from research notes. "
-            "At least 3 statistics from research. "
-            f"Tone must be {tone} throughout. "
-            "Nothing after [TAGS] line."
+            "[TAGS] exactly 5 comma-separated tags"
         ),
-        backstory=(
-            "Senior writer published in TechCrunch and Wired. "
-            "15 years of editing experience. "
-            "Every stat is sourced, every sentence earns its place."
-        ),
+        backstory="Senior writer. 15 years experience. Every stat is sourced.",
         tools=[],
         llm=llm,
         verbose=False,
         allow_delegation=False,
-        max_iter=2,
-        max_rpm=4,
+        max_iter=1,      # One pass — no retry loops
+        # max_rpm intentionally omitted
     )
 
     research_task = Task(
         description=(
-            f"Research '{topic}'. Run exactly 3 web searches:\n"
+            f"Research '{topic}'. Do 3 web searches:\n"
             f"1. '{topic} facts statistics 2025'\n"
             f"2. '{topic} latest developments'\n"
-            f"3. '{topic} expert opinion challenges'\n\n"
-            "Return structured Markdown notes:\n"
-            "## Key Facts & Statistics (with source URLs)\n"
-            "## Recent Developments\n"
-            "## Expert Perspectives\n"
-            "## Sources (all URLs found)\n\n"
-            "Only include facts actually found in search results."
+            f"3. '{topic} expert opinion'\n\n"
+            "Return structured Markdown:\n"
+            "## Key Facts & Statistics\n## Recent Developments\n"
+            "## Expert Perspectives\n## Sources"
         ),
-        expected_output=(
-            "Structured Markdown research notes, 4 sections, min 300 words. "
-            "All statistics have source URLs."
-        ),
+        expected_output="Structured research notes in Markdown, min 300 words.",
         agent=researcher,
     )
 
     write_edit_task = Task(
         description=(
-            f"Using the research notes, write a complete {tone} blog post "
-            f"about '{topic}' (~{word_count} words). "
-            "Self-edit for grammar and flow. "
-            "Then append SEO metadata using the exact markers from your goal. "
-            "Do not search the web — use only the research notes provided."
+            f"Using the research notes, write a {tone} blog post about '{topic}' "
+            f"(~{word_count} words). Then append:\n"
+            "[SEO_TITLE] ...\n[META_DESC] ...\n[TAGS] tag1, tag2, tag3, tag4, tag5"
         ),
         expected_output=(
-            f"Complete polished blog post ~{word_count} words in Markdown, then:\n"
-            "[SEO_TITLE] ...\n[META_DESC] ...\n[TAGS] ..., ..., ..., ..., ..."
+            f"Blog post ~{word_count} words in Markdown + SEO metadata markers."
         ),
         agent=writer_editor,
         context=[research_task],
@@ -235,7 +194,7 @@ def run_crew_pipeline(topic, tone, word_count, llm):
         process=Process.sequential,
         verbose=False,
         memory=False,
-        max_rpm=4,
+        # max_rpm intentionally omitted — Groq free tier = 30 req/min, no throttle needed
     )
 
     result = crew.kickoff()
@@ -293,7 +252,7 @@ with st.sidebar:
     st.subheader("⚙️ Settings")
     tone       = st.selectbox("Tone", ["Professional", "Casual", "Technical", "Academic"])
     word_count = st.slider("Target words", 300, 2000, 800, step=100)
-    st.info("⏱ Estimated: 2–5 min\n(2 agents · Groq speed)")
+    st.info("⏱ Estimated: 1–2 min")
     st.divider()
 
     st.subheader("📂 History")
@@ -338,7 +297,7 @@ topic = st.text_input(
 m1, m2, m3 = st.columns(3)
 m1.metric("Tone", tone)
 m2.metric("Target Words", word_count)
-m3.metric("Agents", "3")
+m3.metric("Agents", "2")
 
 generate_btn = st.button(
     "🚀 Generate Blog Post",
@@ -367,8 +326,8 @@ if generate_btn and topic.strip() and llm:
     prog    = st.progress(0)
     start_t = time.time()
 
-    status.info("🔬 Researcher searching DuckDuckGo... (1/3)")
-    prog.progress(10)
+    status.info("🔬 Researcher is searching the web...")
+    prog.progress(15)
 
     try:
         raw, research_notes = run_crew_pipeline(topic, tone, word_count, llm)
