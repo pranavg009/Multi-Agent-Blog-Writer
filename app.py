@@ -341,7 +341,7 @@ with st.sidebar:
     st.subheader("⚙️ Settings")
     tone       = st.selectbox("Tone", ["Professional", "Casual", "Technical", "Academic"])
     word_count = st.slider("Target words", 300, 2000, 800, step=100)
-    st.info("⏱ Estimated: 45–90 seconds\n(3 Groq calls · no framework)")
+    st.info("⏱ Estimated: 45–90 seconds\n")
     st.divider()
     st.subheader("📂 History")
     if st.session_state.history:
@@ -384,7 +384,7 @@ topic = st.text_input(
 m1, m2, m3 = st.columns(3)
 m1.metric("Tone",         tone)
 m2.metric("Target Words", word_count)
-m3.metric("API Calls",    "3")
+m3.metric("Agents",    "3")
 
 generate_btn = st.button(
     "🚀 Generate Blog Post",
